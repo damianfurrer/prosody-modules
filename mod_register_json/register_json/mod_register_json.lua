@@ -3,7 +3,9 @@
 
 -- Copyright (C) 2010 - 2013, Marco Cirillo (LW.Org)
 
-local datamanager = datamanager
+module:depends("http")
+
+local datamanager = require "util.datamanager"
 local b64_decode = require "util.encodings".base64.decode
 local b64_encode = require "util.encodings".base64.encode
 local http_event = require "net.http.server".fire_event
@@ -13,12 +15,11 @@ local json_decode = require "util.json".decode
 local nodeprep = require "util.encodings".stringprep.nodeprep
 local open, os_time, setmt, type = io.open, os.time, setmetatable, type
 local sha1 = require "util.hashes".sha1
+local http = require "util.http"
 local urldecode = http.urldecode
-local usermanager = usermanager
+local usermanager = require "core.usermanager"
 local uuid_gen = require "util.uuid".generate
 local timer = require "util.timer"
-
-module:depends("http")
 
 -- Pick up configuration and setup stores/variables.
 
@@ -194,6 +195,17 @@ local function r_template(event, type)
 	else return http_response(event, 500, "Failed to obtain template.") end
 end
 
+local function r_bortemplate(event, type, backend)
+	if backend and (type == "success") then
+		return http_response(event, 200, type)
+	elseif backend and (type == "fail") then
+		return http_response(event, 406, type)
+	else
+		return r_template(event, type)
+	end
+end
+
+
 local function handle_verify(event, path)
 	local request = event.request
 	local body = request.body
@@ -216,12 +228,12 @@ local function handle_verify(event, path)
 			else return http_response(event, 404, "Not found.") end
 		end
 	elseif request.method == "POST" then
-		if path == "" then
+		if (path == "") or (path == "backend") then
 			if not body then return http_response(event, 400, "Bad Request.") end
 			local uuid = urldecode(body):match("^uuid=(.*)$")
 
 			if not pending[uuid] then
-				return r_template(event, "fail")
+				return r_bortemplate(event, "fail", (path == "backend"))
 			else
 				local username, password, ip =
 				      pending[uuid].node, pending[uuid].password, pending[uuid].ip
@@ -235,7 +247,7 @@ local function handle_verify(event, path)
 					module:log("info", "Account %s@%s is successfully verified and activated", username, module.host)
 					-- we shall not clean the user from the pending lists as long as registration doesn't succeed.
 					pending[uuid] = nil ; pending_node[username] = nil
-					return r_template(event, "success")
+					return r_bortemplate(event, "success", (path == "backend"))
 				else
 					module:log("error", "User creation failed: "..error)
 					return http_response(event, 500, "Encountered server error while creating the user: "..error)
